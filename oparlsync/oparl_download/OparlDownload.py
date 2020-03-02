@@ -45,7 +45,6 @@ class OparlDownload(BaseTask):
     body_id = None
 
     def __init__(self, **kwargs):
-        self.body_id = kwargs.get('body')
         super().__init__()
 
         self.start_time = datetime.datetime.utcnow()
@@ -61,12 +60,6 @@ class OparlDownload(BaseTask):
             Paper,
             File,
             Location
-        ]
-        self.body_objects = [
-            Organization,
-            Person,
-            Meeting,
-            Paper
         ]
 
         # statistics
@@ -90,8 +83,7 @@ class OparlDownload(BaseTask):
         self.modified_since = None
         if kwargs.get('since'):
             self.modified_since = datetime.datetime.strptime(kwargs['since'], '%Y-%m-%d').strftime('%Y-%m-%dT%H:%M:%SZ')
-        self.body_id = kwargs.get('body')
-        self.run_full()
+        self.run_full(kwargs.get('body'))
         """
         for arg in args:
             if arg.startswith('since='):
@@ -111,21 +103,42 @@ class OparlDownload(BaseTask):
             self.run_full(body_id)
         """
 
+    def body_objects(self, last_update):
+        result = [
+            Organization,
+            Person,
+            Meeting,
+            Paper
+        ]
+        if self.oparl_version == '1.1' and last_update:
+            result += [
+                Membership,
+                AgendaItem,
+                Consultation,
+                File,
+                Location
+            ]
+        return result
 
-
-    def run_full(self):
-        self.body_config = self.get_body_config(self.body_id)
-        self.datalog.info('Body %s sync launched.' % self.body_id)
-        if not self.body_config:
+    def run_full(self, body_id):
+        body_config = self.get_body_config(body_id)
+        self.datalog.info('Body %s sync launched.' % body_id)
+        if not body_config:
             self.datalog.error('body id %s configuration not found' % self.body_id)
             return
-        if 'url' not in self.body_config:
+        if 'url' not in body_config:
             return
         start_time = time.time()
-        self.get_body()
-        if not self.body_uid:
+        body_remote = self.get_body_from_remote(self.body_config['url'])
+        local_body = self.update_local_body(body_remote)
+        if not local_body:
             return
-        for object in self.body_objects:
+        last_sync = self.get_last_sync(local_body)
+        self.adjust_body_input_before_save(body_remote)
+        self.set_oparl_version(body_remote)
+        self.save_object(Body, body_remote)
+
+        for object in self.body_objects(last_sync):
             self.get_list(object)
 
         # set last sync if everything is done so far
@@ -151,118 +164,74 @@ class OparlDownload(BaseTask):
         self.datalog.info('all time:             %s s' % round(time.time() - start_time, 1))
         self.datalog.info('processed %s objects per second' % round(self.mongodb_request_count / (time.time() - start_time), 1))
 
-    def run_single_by_list(self, body_id, list):
-        self.body_config = self.get_body_config(body_id)
-        self.datalog.info('Body %s sync launched.' % body_id)
-        if not self.body_config:
-            self.datalog.error('body id %s configuration not found' % body_id)
-            return
-        if 'url' not in self.body_config:
-            return
-        start_time = time.time()
-        self.get_body()
-        if not self.body_uid:
-            return
-        self.get_list(Paper, list)
-
-
-    def run_single_by_uid(self, body_id, uid):
-        pass
-
-    def run_single_by_url(self, body_id, url):
-        data = self.get_url_json(url)
-        if not data:
-            sys.exit('fatal: this is not an oparl object.')
-        for oparl_object in self.valid_objects:
-            if data['type'] == oparl_object.type:
-                self.save_object(oparl_object, data)
-
     def reset_cache(self):
         self.cache = {}
         for obj in self.valid_objects:
             self.cache[obj.__name__] = {}
 
-    def get_body(self, set_last_sync=True):
-        self.body_uid = None
-        if self.config.USE_MIRROR:
-            body_raw = self.get_url_json(self.config.OPARL_MIRROR_URL + '/body-by-id?id=' + urllib.parse.quote_plus(self.body_config['url']), wait=False)
-        else:
-            body_raw = self.get_url_json(self.body_config['url'], wait=False)
-        if not body_raw:
-            return
-        # save originalId from body to ensure that uid can be used
-        query = {
-            'uid': self.body_config['id']
-        }
+    def get_body_from_remote(self, url):
+        url_to_use = self.config.OPARL_MIRROR_URL + '/body-by-id?id=' + urllib.parse.quote_plus(url) if self.config.USE_MIRROR else url
+        return self.get_url_json(url_to_use, wait=False)
 
+    def create_local_body_input(self, body_remote, body_config):
         object_json = {
             '$set': {
-                'rgs': self.body_config['rgs'],
-                'uid': self.body_config['id']
+                'rgs': body_config['rgs'],
+                'uid': body_config['id']
             }
         }
 
-        if 'legacy' not in self.body_config:
-            object_json['$set']['originalId'] = body_raw[self.config.OPARL_MIRROR_PREFIX + ':originalId'] if self.config.USE_MIRROR else body_raw['id']
+        if 'legacy' not in body_config:
+            object_json['$set']['originalId'] = body_remote[
+                self.config.OPARL_MIRROR_PREFIX + ':originalId'] if self.config.USE_MIRROR else body_remote['id']
         if self.config.ENABLE_PROCESSING:
-            region = Region.objects(rgs=self.body_config['rgs']).first()
+            region = Region.objects(rgs=body_config['rgs']).first()
             if region:
                 object_json['$set']['region'] = region.id
         if self.config.USE_MIRROR:
-            object_json['$set']['mirrorId'] = body_raw['id']
-        else:
-            # Copy missing values from system object if necessary
-            if not body_raw.get('licence') or not body_raw.get('contactName') or not body_raw.get('contactEmail'):
-                system_raw = self.get_url_json(body_raw['system'])
-                if system_raw.get('licence') and not body_raw.get('licence'):
-                    body_raw['licence'] = system_raw['licence']
-                if system_raw.get('contactName') and not body_raw.get('contactName'):
-                    body_raw['contactName'] = system_raw['contactName']
-                if system_raw.get('contactEmail') and not body_raw.get('contactEmail'):
-                    body_raw['contactEmail'] = system_raw['contactEmail']
-
+            object_json['$set']['mirrorId'] = body_remote['id']
         self.correct_document_values(object_json['$set'])
+
+        return object_json
+
+    def update_body_mongo(self, input):
         self.mongodb_request_count += 1
-        result = self.db_raw.body.find_one_and_update(
-            query,
-            object_json,
+        return self.db_raw.body.find_one_and_update(
+            {
+                'uid': body_config['id']
+            },
+            input,
             upsert=True,
             return_document=ReturnDocument.AFTER
         )
-        self.body_uid = result['_id']
 
-        if 'lastSync' in result:
-            self.last_update = pytz.UTC.localize(result['lastSync']).astimezone(pytz.timezone('Europe/Berlin'))
-        else:
-            self.last_update = None
-        self.save_object(Body, body_raw)
+    def get_last_sync(self, local_body):
+        return pytz.UTC.localize(local_body['lastSync']).astimezone(pytz.timezone('Europe/Berlin')) if 'lastSync' in local_body else None
 
-        if body_raw['type'] == 'https://schema.oparl.org/1.0/Body':
+    def set_oparl_version(self, body_remote):
+        if body_remote['type'] == 'https://schema.oparl.org/1.0/Body':
             self.oparl_version = '1.0'
-        elif body_raw['type'] == 'https://schema.oparl.org/1.1/Body':
+        elif body_remote['type'] == 'https://schema.oparl.org/1.1/Body':
             self.oparl_version = '1.1'
-        else:
-            return None
 
-        self.organization_list_url = body_raw['organization']
-        self.person_list_url = body_raw['person']
-        self.meeting_list_url = body_raw['meeting']
-        self.paper_list_url = body_raw['paper']
+    def adjust_body_input_before_save(self, body_remote):
+        if not self.config.USE_MIRROR:
+            # Copy missing values from system object if necessary
+            if not body_remote.get('licence') or not body_remote.get('contactName') or not body_remote.get('contactEmail'):
+                system_raw = self.get_url_json(body_remote['system'])
+                if system_raw.get('licence') and not body_remote.get('licence'):
+                    body_remote['licence'] = system_raw['licence']
+                if system_raw.get('contactName') and not body_remote.get('contactName'):
+                    body_remote['contactName'] = system_raw['contactName']
+                if system_raw.get('contactEmail') and not body_remote.get('contactEmail'):
+                    body_remote['contactEmail'] = system_raw['contactEmail']
+        return body_remote
 
-        if self.oparl_version == '1.1' and self.last_update:
-            self.membership_list_url = body_raw['membership']
-            self.agenda_item_list_url = body_raw['agendaItem']
-            self.consultation_list_url = body_raw['consultation']
-            self.location_list_url = body_raw['locationList']
-            self.file_list_url = body_raw['file']
-
-            self.body_objects += [
-                Membership,
-                AgendaItem,
-                Consultation,
-                File,
-                Location
-            ]
+    def update_local_body(self, body_remote, set_last_sync=True):
+        local_body_input = self.create_local_body_input(body_remote)
+        if not local_body_input:
+            return
+        return self.update_body_mongo(local_body_input)
 
     def get_list(self, object, list_url=None):
         if list_url:
