@@ -32,8 +32,8 @@ class Maintenance(BaseTask, MaintenanceRemove, MaintenanceRegion, MaintenanceReg
         'elasticsearch'
     ]
 
-    def __init__(self, body_id):
-        self.body_id = body_id
+    def __init__(self, **kwargs):
+        self.body_id = kwargs['region']
         super().__init__()
         self.valid_objects = [
             Body,
@@ -48,6 +48,7 @@ class Maintenance(BaseTask, MaintenanceRemove, MaintenanceRegion, MaintenanceReg
             File,
             Location
         ]
+        self.run(self.body_id, kwargs['job'])
 
     def run(self, body_id, *args):
         if len(args) < 1:
@@ -58,7 +59,7 @@ class Maintenance(BaseTask, MaintenanceRemove, MaintenanceRegion, MaintenanceReg
         elif args[0] == 'generate_regions':
             self.generate_regions()
         elif args[0] == 'elasticsearch_regions':
-            self.elasticsearch_regions()
+            self.elasticsearch_regions(body_id)
         elif args[0] == 'update_street_locality':
             self.update_street_locality()
         elif args[0] == 'sync_bodies':
@@ -86,7 +87,7 @@ class Maintenance(BaseTask, MaintenanceRemove, MaintenanceRegion, MaintenanceReg
         self.sync_body(body_id)
         self.generate_regions()
         self.sync_body(body_id)
-        self.elasticsearch_regions()
+        self.elasticsearch_regions(body_id)
 
     def fix_oparl_11(self):
         count_delete = 0

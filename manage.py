@@ -17,7 +17,7 @@ from oparlsync import OparlSync
 daemon_choices = ['start', 'start-foreground', 'stop', 'status']
 queue_choices = ['add', 'clear', 'list', 'stats']
 module_choices = ['download', 'backref', 'elastic', 'thumbnails', 'fulltext', 'georef', 'sitemap', 'misc', 'worker']
-worker_region_choices = ['region-download', 'region-elastic', 'sync-region', 'sync-regions']
+worker_region_choices = ['region-download', 'elasticsearch_regions', 'sync-region', 'sync-regions', 'generate_regions']
 worker_body_choices = ['remove-body', 'sync-bodies', 'sync-body', 'remove-locations', 'reset-georef', 'reset-lastsync']
 worker_misc_choices = ['migrate-ids', 'fix-oparl-11', 'sitemap-master']
 

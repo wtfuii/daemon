@@ -21,6 +21,7 @@ from .ElasticsearchImportBase import ElasticsearchImportBase
 class ElasticsearchMeetingIndex:
 
     def meeting_index(self):
+        self.datalog.info('Starting meeting indexing...')
         if not self.es.indices.exists_alias(name='meeting-latest'):
             now = datetime.utcnow()
             index_name = 'meeting-' + now.strftime('%Y%m%d-%H%M')
@@ -52,7 +53,13 @@ class ElasticsearchMeetingIndex:
             regions.append(str(region.id))
             region = region.parent
 
-        for meeting in Meeting.objects(body=self.body).no_cache():
+        last_index_timestamp = Option.get('last_index_meeting')
+
+        query_args = {'body': self.body}
+        if last_index_timestamp:
+            query_args['modified__gt'] = last_index_timestamp
+
+        for meeting in Meeting.objects(**query_args).no_cache():
             if meeting.deleted:
                 self.es.delete(
                     index=index_name,
@@ -78,4 +85,5 @@ class ElasticsearchMeetingIndex:
             self.statistics['created'],
             self.statistics['updated']
         ))
+        Option.set('last_index_meeting', datetime.utcnow(), 'datetime')
 

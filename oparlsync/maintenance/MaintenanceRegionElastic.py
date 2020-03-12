@@ -17,12 +17,12 @@ from ..elasticsearch_import import ElasticsearchImport
 
 
 class MaintenanceRegionElastic:
-    def elasticsearch_regions(self):
+    def elasticsearch_regions(self, body_id):
         if not self.es.indices.exists_alias(name='region-latest'):
             now = datetime.utcnow()
             index_name = 'region-' + now.strftime('%Y%m%d-%H%M')
 
-            es_import = ElasticsearchImport(self)
+            es_import = ElasticsearchImport(**{'body': body_id})
 
             mapping = es_import.es_mapping_generator(Region, deref='deref_region', delete='delete_region')
             mapping['properties']['body_count'] = {

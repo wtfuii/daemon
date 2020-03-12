@@ -21,6 +21,8 @@ from .ElasticsearchImportBase import ElasticsearchImportBase
 class ElasticsearchPersonIndex:
 
     def person_index(self):
+        self.datalog.info('Starting person indexing...')
+
         if not self.es.indices.exists_alias(name='person-latest'):
             now = datetime.utcnow()
             index_name = 'person-' + now.strftime('%Y%m%d-%H%M')
@@ -52,7 +54,13 @@ class ElasticsearchPersonIndex:
             regions.append(str(region.id))
             region = region.parent
 
-        for person in Person.objects(body=self.body).no_cache():
+        last_index_timestamp = Option.get('last_index_person')
+
+        query_args = {'body': self.body}
+        if last_index_timestamp:
+            query_args['modified__gt'] = last_index_timestamp
+
+        for person in Person.objects(**query_args).no_cache():
             if person.deleted:
                 self.es.delete(
                     index=index_name,
@@ -78,4 +86,6 @@ class ElasticsearchPersonIndex:
             self.statistics['created'],
             self.statistics['updated']
         ))
+        Option.set('last_index_person', datetime.utcnow(), 'datetime')
+
 

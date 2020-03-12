@@ -21,6 +21,8 @@ from .ElasticsearchImportBase import ElasticsearchImportBase
 class ElasticsearchOrganizationIndex:
 
     def organization_index(self):
+        self.datalog.info('Starting organization indexing...')
+
         if not self.es.indices.exists_alias(name='organization-latest'):
             now = datetime.utcnow()
             index_name = 'organization-' + now.strftime('%Y%m%d-%H%M')
@@ -52,7 +54,14 @@ class ElasticsearchOrganizationIndex:
             regions.append(str(region.id))
             region = region.parent
 
-        for organization in Organization.objects(body=self.body).no_cache():
+
+        last_index_timestamp = Option.get('last_index_organization')
+
+        query_args = {'body': self.body}
+        if last_index_timestamp:
+            query_args['modified__gt'] = last_index_timestamp
+
+        for organization in Organization.objects(**query_args).no_cache():
             if organization.deleted:
                 self.es.delete(
                     index=index_name,
@@ -78,4 +87,5 @@ class ElasticsearchOrganizationIndex:
             self.statistics['created'],
             self.statistics['updated']
         ))
+        Option.set('last_index_organization', datetime.utcnow(), 'datetime')
 

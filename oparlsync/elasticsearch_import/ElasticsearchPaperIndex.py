@@ -21,6 +21,7 @@ from .ElasticsearchImportBase import ElasticsearchImportBase
 class ElasticsearchPaperIndex:
 
     def paper_index(self):
+        self.datalog.info('Starting paper indexing...')
         if not self.es.indices.exists_alias(name='paper-latest'):
             now = datetime.utcnow()
             index_name = 'paper-' + now.strftime('%Y%m%d-%H%M')
@@ -46,13 +47,19 @@ class ElasticsearchPaperIndex:
         else:
             index_name = list(self.es.indices.get_alias('paper-latest'))[0]
 
+        last_index_timestamp = Option.get('last_index_paper')
+
         regions = []
         region = self.body.region
         while (region):
             regions.append(str(region.id))
             region = region.parent
 
-        for paper in Paper.objects(body=self.body).no_cache():
+        query_args = {'body': self.body}
+        if last_index_timestamp:
+            query_args['modified__gt'] = last_index_timestamp
+
+        for paper in Paper.objects(**query_args).no_cache():
             if paper.deleted:
                 self.es.delete(
                     index=index_name,
@@ -78,4 +85,5 @@ class ElasticsearchPaperIndex:
             self.statistics['created'],
             self.statistics['updated']
         ))
+        Option.set('last_index_paper', datetime.utcnow(), 'datetime')
 

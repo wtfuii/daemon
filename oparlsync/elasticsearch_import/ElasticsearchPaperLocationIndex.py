@@ -22,6 +22,7 @@ from elasticsearch.exceptions import ConnectionError
 class ElasticsearchPaperLocationIndex:
 
     def paper_location_index(self):
+        self.datalog.info('Starting paper location indexing...')
         if not self.es.indices.exists_alias(name='paper-location-latest'):
             now = datetime.utcnow()
             index_name = 'paper-location-' + now.strftime('%Y%m%d-%H%M')
@@ -57,7 +58,13 @@ class ElasticsearchPaperLocationIndex:
             regions.append(str(region.id))
             region = region.parent
 
-        for location in Location.objects(body=self.body).no_cache():
+        last_index_timestamp = Option.get('last_index_paper_location')
+
+        query_args = {'body': self.body}
+        if last_index_timestamp:
+            query_args['modified__gt'] = last_index_timestamp
+
+        for location in Location.objects(**query_args).no_cache():
             if location.deleted:
                 self.es.delete(
                     index=index_name,
@@ -92,7 +99,8 @@ class ElasticsearchPaperLocationIndex:
                 location_dict['geotype'] = location_dict['geojson']['geometry']['type']
                 location_dict['geojson'] = json.dumps(location_dict['geojson'])
 
-            location_dict['legacy'] = bool(location.region.legacy)
+            if location.region:
+                location_dict['legacy'] = bool(location.region.legacy)
             try:
                 new_doc = self.es.index(
                     index=index_name,
@@ -110,3 +118,4 @@ class ElasticsearchPaperLocationIndex:
             self.statistics['created'],
             self.statistics['updated']
         ))
+        Option.set('last_index_paper_location', datetime.utcnow(), 'datetime')
