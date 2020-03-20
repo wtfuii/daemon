@@ -86,6 +86,8 @@ if len(args) > 1:
                         )
             elif args[2] == 'street':
                 parser.add_argument('region')
+            elif args[2] == 'sitemap':
+                pass
             else:
                 parser.add_argument('body')
                 parser.add_argument(

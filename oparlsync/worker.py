@@ -68,7 +68,7 @@ class Worker(Process):
                 'backrefs': ['fulltext'],
                 'fulltext': ['georefs'],
                 'ggeorefs': ['elastic'],
-                'elastic': ['misc', 'sitemap']
+                'elastic': ['misc']
             }
         else:
             self.next_job = {
